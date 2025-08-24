@@ -1,0 +1,62 @@
+steps:
+  # Build and push backend image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/trading-strategy-app/backend:$COMMIT_SHA', './backend']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/trading-strategy-app/backend:$COMMIT_SHA']
+  
+  # Build and push frontend image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/trading-strategy-app/frontend:$COMMIT_SHA', './frontend']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/trading-strategy-app/frontend:$COMMIT_SHA']
+  
+  # Get the backend URL
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        BACKEND_URL=$(gcloud run services describe backend --platform managed --region us-central1 --format="value(status.url)" || echo "https://backend-placeholder-url")
+        echo "Backend URL: $${BACKEND_URL}"
+        echo "REACT_APP_API_URL=$${BACKEND_URL}/api" > frontend_env.txt
+  
+  # Deploy backend to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'backend'
+      - '--image'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/trading-strategy-app/backend:$COMMIT_SHA'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--memory'
+      - '512Mi'
+      - '--set-env-vars'
+      - 'FLASK_ENV=production,STORAGE_BUCKET=trading-strategy-app-storage'
+  
+  # Deploy frontend to Cloud Run with backend URL
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        BACKEND_URL=$(gcloud run services describe backend --platform managed --region us-central1 --format="value(status.url)")
+        gcloud run deploy frontend \
+          --image us-central1-docker.pkg.dev/$PROJECT_ID/trading-strategy-app/frontend:$COMMIT_SHA \
+          --region us-central1 \
+          --platform managed \
+          --allow-unauthenticated \
+          --memory 256Mi \
+          --set-env-vars="REACT_APP_API_URL=$${BACKEND_URL}/api"
+
+images:
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/trading-strategy-app/backend:$COMMIT_SHA'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/trading-strategy-app/frontend:$COMMIT_SHA'
+
+timeout: 1800s
